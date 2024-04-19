@@ -301,9 +301,12 @@ function setup(shaders)
                 let distance = distcenter(0,z);
                 multTranslation([0.0,Math.sin(time-distance)*options.intensity, 0.0]);
                 for(let x = -options.Number; x <= options.Number ; x++){
-                        if(options.random){
-                            gl.uniform3fv(gl.getUniformLocation(program, "color"), vec3(Math.random(), Math.random(), Math.random()));
-                        }
+                    if (options.random) {
+                        // Calculate rainbow color based on distance from center
+                        let rainbowColor = rainbowColorForDistance(distance);
+                    
+                        gl.uniform3fv(gl.getUniformLocation(program, "color"), rainbowColor);
+                    }
                         pushMatrix();
                             multTranslation([x,0,z]);  
                             uploadModelView();
@@ -317,10 +320,12 @@ function setup(shaders)
             for(let z = -options.Number; z <= options.Number ; z++){
                 pushMatrix();
                 for(let x = -options.Number; x <= options.Number ; x++){
-                        if(options.random){
-                            gl.uniform3fv(gl.getUniformLocation(program, "color"), vec3(Math.random(), Math.random(), Math.random()));
-                        }
-                        let distance = distcenter(x,z);
+                    let distance = distcenter(x,z)
+                    if (options.random) {
+                        let rainbowColor = rainbowColorForDistance(distance);
+                    
+                        gl.uniform3fv(gl.getUniformLocation(program, "color"), rainbowColor);
+                    };
                         pushMatrix();
                             multScale([1,2 + Math.abs(Math.sin(time-distance)*options.intensity),1]);
                             multTranslation([x,0,z]);  
@@ -333,6 +338,40 @@ function setup(shaders)
         }  
     }   
 }
+
+function rainbowColorForDistance(distance) {
+    // Calculate hue based on distance
+    let hue = (distance * 25) % 360;
+
+    // Convert hue to RGB color
+    let rgb = hsvToRgb(hue, 1, 1);
+
+    return vec3(rgb[0], rgb[1], rgb[2]);
+}
+
+
+function hsvToRgb(h, s, v) {
+    let c = v * s;
+    let hp = Math.floor(h / 60); // Integer part of h / 60
+    let x = c * (1 - Math.abs((h / 60) % 2 - 1)); // Fractional part of h / 60
+    let rgb = [];
+
+    if (isNaN(h)) rgb = [0, 0, 0];
+    else if (hp === 0) rgb = [c, x, 0];
+    else if (hp === 1) rgb = [x, c, 0];
+    else if (hp === 2) rgb = [0, c, x];
+    else if (hp === 3) rgb = [0, x, c];
+    else if (hp === 4) rgb = [x, 0, c];
+    else if (hp === 5) rgb = [c, 0, x];
+
+    let m = v - c;
+    rgb[0] += m;
+    rgb[1] += m;
+    rgb[2] += m;
+
+    return rgb;
+}
+
 
 const urls = ["shader.vert", "shader.frag"];
 loadShadersFromURLS(urls).then(shaders => setup(shaders));
