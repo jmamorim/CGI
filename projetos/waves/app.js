@@ -341,7 +341,7 @@ function setup(shaders)
 
 function rainbowColorForDistance(distance) {
     // Calculate hue based on distance
-    let hue = (distance * 25) % 360;
+    let hue = (distance * 25 + time * 25) % 360;
 
     // Convert hue to RGB color
     let rgb = hsvToRgb(hue, 1, 1);
