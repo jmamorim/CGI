@@ -285,25 +285,39 @@ function setup(shaders)
         popMatrix();
     }
 
-    function bullet(){
-        gl.uniform4fv(color,vec4(0.0,0.0,0.0,1.0));   
-        for(let i = 0; i < balas.length; i++){
-            times[i] += 1/60.0
-            pushMatrix();
-                multTranslation([balaspos[i],0,0]);
-                multTranslation([-0.2,0.5,0]);
-                pushMatrix();
-                    multRotationY(balaroty[i]);
-                    multTranslation([0.25,0,0]);
-                    multRotationZ(-90+balarotz[i]);
-                    multTranslation([-g*times[i]*times[i]/2,1.1+speed*times[i],0]);
-                    multScale([1/8,1/8,1/8]); 
-                    uploadModelView(); 
-                        SPHERE.draw(gl,program,mode);
-                popMatrix();
-        popMatrix();
-        }
+function bullet(){
+    gl.uniform4fv(color,vec4(0.0,0.0,0.0,1.0));
+
+    // Remove bullets that have hit the floor
+for(let i = balas.length - 1; i >= 0; i--){
+    const t = times[i];
+    const y_world = 0.5 + 1.1 + speed * t + (g * t * t) / 2;
+    if(y_world <= 0.15){
+        balas.splice(i, 1);
+        balaspos.splice(i, 1);
+        balarotz.splice(i, 1);
+        balaroty.splice(i, 1);
+        times.splice(i, 1);
     }
+}
+
+    for(let i = 0; i < balas.length; i++){
+        times[i] += 1/60.0
+        pushMatrix();
+            multTranslation([balaspos[i],0,0]);
+            multTranslation([-0.2,0.5,0]);
+            pushMatrix();
+                multRotationY(balaroty[i]);
+                multTranslation([0.25,0,0]);
+                multRotationZ(-90+balarotz[i]);
+                multTranslation([-g*times[i]*times[i]/2,1.1+speed*times[i],0]);
+                multScale([1/8,1/8,1/8]); 
+                uploadModelView(); 
+                    SPHERE.draw(gl,program,mode);
+            popMatrix();
+        popMatrix();
+    }
+}
     
     function render()
     {
