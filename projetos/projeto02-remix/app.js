@@ -1,5 +1,5 @@
 import { buildProgramFromSources, loadShadersFromURLS, setupWebGL } from "../../libs/utils.js";
-import { ortho, perspective, lookAt, flatten, vec3, vec4, mat4, mult, translate, rotateY, rotateZ, normalize } from "../../libs/MV.js";
+import { ortho, perspective, lookAt, flatten, vec3, vec4, mat4, mult, translate, rotateX, rotateY, rotateZ, normalize } from "../../libs/MV.js";
 import {modelView, loadMatrix, multRotationY, multScale, multTranslation, popMatrix, pushMatrix, multRotationX, multRotationZ} from "../../libs/stack.js";
 
 import * as SPHERE from '../../libs/sphere.js';
@@ -52,7 +52,7 @@ let shake = 0;
 
 function newTank(x, z, heading)
 {
-    return {x, z, heading, turret: 0, elevation: 20, rotL: 0, rotR: 0, recoil: 0, cooldown: 0, hp: 5, flash: 0, dead: 0};
+    return {x, z, heading, turret: 0, elevation: 20, rotL: 0, rotR: 0, speed: 0, pitch: 0, pitchV: 0, roll: 0, rollV: 0, recoil: 0, cooldown: 0, hp: 5, flash: 0, dead: 0};
 }
 
 const tank = newTank(0, 0, 0);
@@ -220,7 +220,101 @@ function toggleBattle()
 function toggleHills()
 {
     hills = !hills;
+    hills ? startMusic() : stopMusic();
     toast(hills ? "Green Hills" : "Arena normal");
+}
+
+//---------------------------------------------------------------- music
+
+//drop your own track at music/green-hills.mp3; without it an original chiptune loop plays instead
+const music = {track: null, failed: false, ctx: null, timer: null, step: 0, time: 0};
+
+function startMusic()
+{
+    if(!music.track) {
+        music.track = new Audio("music/green-hills.mp3");
+        music.track.loop = true;
+        music.track.volume = 0.5;
+        music.track.onerror = () => { music.failed = true; if(hills) startChiptune(); };
+    }
+    if(music.failed) return startChiptune();
+    music.track.play().catch(() => { if(hills) startChiptune(); });
+}
+
+function stopMusic()
+{
+    if(music.track) music.track.pause();
+    clearInterval(music.timer);
+    music.timer = null;
+    if(music.ctx) music.ctx.suspend();
+}
+
+//16 steps per bar, MIDI notes, 0 = rest
+const tune = {
+    bpm: 150,
+    lead: [
+        72, 0, 76, 0, 79, 0, 76, 72,  74, 0, 76, 0, 72, 0, 0, 0,
+        69, 0, 72, 0, 76, 0, 74, 72,  71, 0, 72, 0, 69, 0, 0, 0,
+        69, 0, 72, 0, 77, 0, 76, 74,  72, 0, 74, 0, 76, 0, 77, 0,
+        79, 0, 0, 74, 0, 79, 0, 77,   76, 0, 74, 0, 71, 0, 74, 0
+    ],
+    chords: [48, 45, 41, 43]//C Am F G roots, one per bar
+};
+
+function startChiptune()
+{
+    if(music.timer) return;
+    if(!music.ctx) music.ctx = new AudioContext();
+    music.ctx.resume();
+    music.time = music.ctx.currentTime + 0.05;
+    music.timer = setInterval(scheduleChiptune, 25);
+}
+
+function scheduleChiptune()
+{
+    const ctx = music.ctx, dt = 60 / tune.bpm / 4;
+    while(music.time < ctx.currentTime + 0.12) {
+        const s = music.step % tune.lead.length, beat = s % 16, t = music.time;
+        const root = tune.chords[Math.floor(s / 16)];
+        if(tune.lead[s]) blip("square", tune.lead[s], t, dt * 1.6, 0.07);
+        if(beat % 2 == 0) blip("triangle", root + (beat % 4 ? 12 : 0), t, dt * 1.8, 0.18);
+        if(beat % 8 == 0) blip("sine", 36, t, dt * 2, 0.35, 0.3);//kick
+        if(beat % 8 == 4) noise(t, 0.12, 0.12);//snare
+        if(beat % 2 == 1) noise(t, 0.03, 0.03);//hat
+        music.time += dt;
+        music.step++;
+    }
+}
+
+function blip(type, midi, t, len, vol, drop = 1)
+{
+    const ctx = music.ctx, osc = ctx.createOscillator(), amp = ctx.createGain();
+    const f = 440 * Math.pow(2, (midi - 69) / 12);
+    osc.type = type;
+    osc.frequency.setValueAtTime(f * (drop < 1 ? 3 : 1), t);
+    osc.frequency.exponentialRampToValueAtTime(f, t + len * drop);
+    amp.gain.setValueAtTime(vol, t);
+    amp.gain.exponentialRampToValueAtTime(0.001, t + len);
+    osc.connect(amp).connect(ctx.destination);
+    osc.start(t);
+    osc.stop(t + len);
+}
+
+function noise(t, len, vol)
+{
+    const ctx = music.ctx;
+    if(!music.noise) {
+        music.noise = ctx.createBuffer(1, ctx.sampleRate * 0.2, ctx.sampleRate);
+        const d = music.noise.getChannelData(0);
+        for(let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    }
+    const src = ctx.createBufferSource(), amp = ctx.createGain();
+    src.buffer = music.noise;
+    amp.gain.setValueAtTime(vol, t);
+    amp.gain.exponentialRampToValueAtTime(0.001, t + len);
+    src.connect(amp).connect(ctx.destination);
+    src.start(t);
+    src.stop(t + len);
 }
 
 //---------------------------------------------------------------- simulation
@@ -237,11 +331,18 @@ function newTarget()
     return {x, z, phase: Math.random() * 6, alive: true, respawn: 0, grow: 0};
 }
 
+//engine rumble, stronger while the tank is moving
+const hullBob = t => 0.004 * Math.sin(clock * 55 + t.x * 3) * (0.5 + Math.abs(t.speed));
+
 //world transform of the barrel, built with the same chain tankbody() uses
 function barrelMatrix(t)
 {
     let m = translate(t.x, 0, t.z);
     m = mult(m, rotateY(t.heading));
+    m = mult(m, translate(0, hullBob(t) + 0.2, 0));
+    m = mult(m, rotateZ(t.pitch));
+    m = mult(m, rotateX(t.roll));
+    m = mult(m, translate(0, -0.2, 0));
     m = mult(m, translate(-0.2, 0.5, 0));
     m = mult(m, rotateY(t.turret));
     m = mult(m, translate(0.25, 0, 0));
@@ -276,11 +377,34 @@ const angleTo = (dx, dz) => Math.atan2(-dz, dx) * 180 / Math.PI;
 function driveTank(t, forward, turnRate, maxSpeed, dt)
 {
     const h = t.heading * Math.PI / 180;
+    //speed eases toward the throttle, braking harder than it accelerates
+    const want = forward * maxSpeed, before = t.speed;
+    const rate = (Math.abs(want) < Math.abs(t.speed) || want * t.speed < 0 ? 4 : 2.2) * maxSpeed;
+    t.speed += clamp(want - t.speed, -rate * dt, rate * dt);
+    const accel = dt > 0 ? (t.speed - before) / dt : 0;
+
     t.heading += turnRate * dt;
-    t.x = clamp(t.x + Math.cos(h) * forward * maxSpeed * dt, -arena, arena);
-    t.z = clamp(t.z - Math.sin(h) * forward * maxSpeed * dt, -arena, arena);
-    t.rotL -= (forward - turnRate / 140) * 100 * dt;
-    t.rotR -= (forward + turnRate / 140) * 100 * dt;
+    t.x = clamp(t.x + Math.cos(h) * t.speed * dt, -arena, arena);
+    t.z = clamp(t.z - Math.sin(h) * t.speed * dt, -arena, arena);
+    const roll = t.speed / maxSpeed;
+    t.rotL -= (roll - turnRate / 140) * 100 * dt;
+    t.rotR -= (roll + turnRate / 140) * 100 * dt;
+
+    //suspension: damped springs, the nose lifts under acceleration, dips when braking, the hull leans out of turns
+    t.pitchV += (-120 * t.pitch - 9 * t.pitchV + 70 * accel) * dt;
+    t.pitch += t.pitchV * dt;
+    t.rollV += (-120 * t.roll - 9 * t.rollV + 2 * turnRate * (Math.abs(t.speed) + 0.4)) * dt;
+    t.roll += t.rollV * dt;
+
+    //kicked-up dirt when launching or skidding to a halt
+    if(Math.abs(accel) > maxSpeed * 1.5 && Math.random() < 0.6) {
+        const braking = accel * t.speed < 0;
+        const along = braking ? 0.6 * Math.sign(t.speed) : -0.5 * Math.sign(accel);
+        const side = Math.random() < 0.5 ? 1 : -1;
+        spawn('smoke', [t.x + Math.cos(h)*along - Math.sin(h)*0.55*side, 0.05, t.z - Math.sin(h)*along - Math.cos(h)*0.55*side],
+              [Math.cos(h)*along*0.8 + (Math.random()-0.5)*0.4, 0.4 + Math.random()*0.4, -Math.sin(h)*along*0.8 + (Math.random()-0.5)*0.4],
+              0.9, 0.12, [0.6, 0.52, 0.38]);
+    }
 
     if((forward || turnRate) && Math.random() < 0.5) {
         const side = Math.random() < 0.5 ? 1 : -1;
@@ -753,7 +877,14 @@ function drawTank(t, palette){
         multTranslation([t.x,0.0,t.z]);
         multRotationY(t.heading);
         multTranslation([-0.03*t.recoil, 0, 0]);
-        tankbody(t, palette);
+        //the hull tilts on its suspension, the tracks stay on the ground
+        pushMatrix();
+            multTranslation([0, hullBob(t) + 0.2, 0]);
+            multRotationZ(t.pitch);
+            multRotationX(t.roll);
+            multTranslation([0, -0.2, 0]);
+            tankbody(t, palette);
+        popMatrix();
         pushMatrix();
             multTranslation([0,0.08,0]);
             wheels(4.5, t.rotR);
