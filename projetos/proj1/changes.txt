@@ -1,0 +1,635 @@
+Projeto 1 (campo eletrico) - change log with diffs
+Generated 2026-10-30
+
+==================================================================
+PART 1 - CHANGES KEPT (uncommitted, against HEAD 78bd6dd)
+==================================================================
+
+ projetos/proj1/app.js               | 204 ++++++++++++++++++------------------
+ projetos/proj1/index.html           |   4 +-
+ projetos/proj1/shaders/shader1.vert |  38 ++++---
+ projetos/proj1/shaders/shader2.frag |  29 +++--
+ projetos/proj1/shaders/shader2.vert |  40 +++----
+ 5 files changed, 164 insertions(+), 151 deletions(-)
+
+diff --git i/projetos/proj1/app.js w/projetos/proj1/app.js
+index b35621e..19446c9 100644
+--- i/projetos/proj1/app.js
++++ w/projetos/proj1/app.js
+@@ -5,143 +5,145 @@ import * as MV from '../../libs/MV.js'
+ let gl;
+ var canvas;
+ let table_height;
+-var program;
+-var cprogram;
+-var twidht;
+-var theight;
+-var lenght;//lenght of points
+-var lenghtc;//lenght of charges
+-var theta;
+-var thetaLoc;
+-const points = [];//position of the points in the grid
+-const charges = [];//position of the charges
+-const chargevalues = [];//values of the charges
++var program;//grid program
++var cprogram;//charges program
++var gridBuffer;
++var chargeBuffer;
++var showCharges = true;
++const points = [];//vertices of the grid segments: (x, y, 0) origin and (x, y, 1) field end
++const charges = [];//position of the charges, in world coordinates
++const chargevalues = [];//sign of the charges (1.0 or -1.0)
+ const MAX_CHARGES = 20;
+ const grid_spacing = 0.05;
+ const table_width = 3.0;
+ const k = 8.988*Math.pow(10,9);
++const charge_magnitude = Math.pow(10,-11);//coulombs, keeps segments readable at this scale
++const angular_speed = 0.01;//radians per frame
++
++function buildGrid()
++{
++    points.length = 0;
++    for(let x = -(table_width/2.0) + grid_spacing; x <= (table_width/2.0); x += grid_spacing) {
++        for(let y = -(table_height/2.0); y <= (table_height/2.0) ; y += grid_spacing) {
++            //small jitter so the grid doesn't look perfectly regular
++            const px = x + (Math.random() - 0.5) * grid_spacing * 0.5;
++            const py = y + (Math.random() - 0.5) * grid_spacing * 0.5;
++            points.push(MV.vec3(px, py, 0.0));
++            points.push(MV.vec3(px, py, 1.0));
++        }
++    }
++    gl.bindBuffer(gl.ARRAY_BUFFER, gridBuffer);
++    gl.bufferData(gl.ARRAY_BUFFER, MV.flatten(points), gl.STATIC_DRAW);
++}
++
++function resize()
++{
++    canvas.width = window.innerWidth;
++    canvas.height = window.innerHeight;
++    table_height = (canvas.height*table_width)/canvas.width;
++    gl.viewport(0, 0, canvas.width, canvas.height);
++    buildGrid();
++}
++
++//positive charges rotate counter-clockwise around the origin, negative ones clockwise
++function moveCharges()
++{
++    for(let i = 0; i < charges.length; i++) {
++        const a = angular_speed * chargevalues[i];
++        const s = Math.sin(a);
++        const c = Math.cos(a);
++        const x = charges[i][0];
++        const y = charges[i][1];
++        charges[i] = MV.vec2(c*x - s*y, s*x + c*y);
++    }
++}
++
++function addCharge(event, value)
++{
++    if(charges.length == MAX_CHARGES){
++        alert("Chegou ao maximo de cargas que pode colocar");
++        return;
++    }
++    const x = (event.offsetX/canvas.width - 0.5) * table_width;
++    const y = (0.5 - event.offsetY/canvas.height) * table_height;
++    charges.push(MV.vec2(x,y));
++    chargevalues.push(value);
++}
+ 
+ function animate(time)
+ {
+     window.requestAnimationFrame(animate);
+-    
++
++    moveCharges();
++
+     gl.clear(gl.COLOR_BUFFER_BIT);
+ 
+-    lenght = points.length;
+-    lenghtc = charges.length;
+-    
+-    //code to draw grid
++    //code to draw the field segments
+     gl.useProgram(program);
+-    const abuffer = gl.createBuffer();
+-    gl.bindBuffer(gl.ARRAY_BUFFER, abuffer);
+-    gl.bufferData(gl.ARRAY_BUFFER, MV.flatten(points), gl.STATIC_DRAW);
+-  
++    gl.bindBuffer(gl.ARRAY_BUFFER, gridBuffer);
+     const vPosition = gl.getAttribLocation(program, "vPosition");
+-    gl.vertexAttribPointer(vPosition, 2, gl.FLOAT, false, 0, 0);
++    gl.vertexAttribPointer(vPosition, 3, gl.FLOAT, false, 0, 0);
+     gl.enableVertexAttribArray(vPosition);
+ 
+-    gl.uniform1f(theight, table_height);
+-    gl.uniform1f(twidht, table_width);
+-
+-    if(lenghtc != 0){
+-      gl.drawArrays(gl.POINTS, 0, lenght);
++    gl.uniform1f(gl.getUniformLocation(program, "table_height"), table_height);
++    gl.uniform1f(gl.getUniformLocation(program, "table_width"), table_width);
++    gl.uniform1i(gl.getUniformLocation(program, "nCharges"), charges.length);
++    if(charges.length != 0){
++        gl.uniform2fv(gl.getUniformLocation(program, "uPosition"), MV.flatten(charges));
++        gl.uniform1fv(gl.getUniformLocation(program, "values"), chargevalues.map(q => q*k*charge_magnitude));
+     }
+-    
++
++    gl.drawArrays(gl.LINES, 0, points.length);
++
+     //code to draw charges
++    if(!showCharges || charges.length == 0) return;
++
+     gl.useProgram(cprogram);
+-    const cbuffer = gl.createBuffer();
+-    gl.bindBuffer(gl.ARRAY_BUFFER, cbuffer);
+-    gl.bufferData(gl.ARRAY_BUFFER, MV.flatten(charges), gl.STATIC_DRAW);
+-    
++    gl.bindBuffer(gl.ARRAY_BUFFER, chargeBuffer);
++    gl.bufferData(gl.ARRAY_BUFFER, MV.flatten(charges.map((c, i) => MV.vec3(c[0], c[1], chargevalues[i]))), gl.DYNAMIC_DRAW);
+     const cPosition = gl.getAttribLocation(cprogram, "vPosition");
+-    gl.vertexAttribPointer(cPosition, 2, gl.FLOAT, false, 0, 0);
++    gl.vertexAttribPointer(cPosition, 3, gl.FLOAT, false, 0, 0);
+     gl.enableVertexAttribArray(cPosition);
+ 
+-    const cvbuffer = gl.createBuffer();
+-    gl.bindBuffer(gl.ARRAY_BUFFER, cvbuffer);
+-    gl.bufferData(gl.ARRAY_BUFFER, MV.flatten(chargevalues), gl.STATIC_DRAW);
+-    
+-    const cvalue = gl.getAttribLocation(cprogram, "charge");
+-    gl.vertexAttribPointer(cvalue, 1, gl.FLOAT, false, 0, 0);
+-    gl.enableVertexAttribArray(cvalue);
+-
+-    theta += 0.01;
+-
+-    gl.uniform1f(thetaLoc, theta);
+-
+-    gl.drawArrays(gl.POINTS, 0, lenghtc);
++    gl.uniform1f(gl.getUniformLocation(cprogram, "table_height"), table_height);
++    gl.uniform1f(gl.getUniformLocation(cprogram, "table_width"), table_width);
+ 
++    gl.drawArrays(gl.POINTS, 0, charges.length);
+ }
+ 
+ function setup(shaders)
+ {
+     canvas = document.getElementById("gl-canvas");
+     gl = UTILS.setupWebGL(canvas);
+-    
++
+     program = UTILS.buildProgramFromSources(gl, shaders["shader1.vert"], shaders["shader1.frag"]);
+     cprogram = UTILS.buildProgramFromSources(gl, shaders["shader2.vert"], shaders["shader2.frag"]);
+ 
+-    canvas.width = window.innerWidth;
+-    canvas.height = window.innerHeight;
+-    table_height = (canvas.height*table_width)/canvas.width;
++    gridBuffer = gl.createBuffer();
++    chargeBuffer = gl.createBuffer();
+ 
+-
+-    for(let x = -(table_width/2.0) + grid_spacing; x <= (table_width/2.0); x += grid_spacing) {
+-        for(let y = -(table_height/2.0); y <= (table_height/2.0) ; y += grid_spacing) {
+-            points.push(MV.vec2(x, y));
+-            points.push(MV.vec2(x, y));
+-        }
+-    }
+-
+-
+-
+-    theta = 0;
+-    theight = gl.getUniformLocation(program, "table_height");
+-    twidht = gl.getUniformLocation(program, "table_width");
+-    thetaLoc = gl.getUniformLocation(cprogram, "theta");
+-
+-    gl.viewport(0, 0, canvas.width, canvas.height);
+     gl.clearColor(0.0, 0.0, 0.0, 1.0);
+-    
++    gl.enable(gl.BLEND);
++    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
++
++    resize();
++
+     //events
+-    window.addEventListener("resize", function (event) {
+-         canvas.width = window.innerWidth;
+-         canvas.height = window.innerHeight;
+-         table_height = (canvas.height*table_width)/canvas.width;
+-         gl.viewport(0, 0, canvas.width, canvas.height);
+-        }    
+-    );
+-    
++    window.addEventListener("resize", resize);
++
++    //click = positive charge, shift + click = negative charge
+     canvas.addEventListener("click", function(event){
+-        if(!event.shiftKey){
+-          if(lenghtc == MAX_CHARGES){
+-            alert("Chegou ao maximo de cargas que pode colocar")
+-          }
+-          else{
+-          const x = (-1 + 2*(event.offsetX)/canvas.width);
+-          const y = -1 + 2*(canvas.height-event.offsetY)/canvas.height;
+-          charges.push(MV.vec2(x,y));
+-          chargevalues.push(1.0);
++        addCharge(event, event.shiftKey ? -1.0 : 1.0);
++    });
++
++    //space toggles the visibility of the charges
++    window.addEventListener("keydown", function(event){
++        if(event.code == "Space"){
++            showCharges = !showCharges;
+         }
+-    }
+-    } 
+-);
++    });
+ 
+-       canvas.addEventListener("click", function(event){
+-        if(event.shiftKey){
+-            if(lenghtc == MAX_CHARGES){
+-                alert("Chegou ao maximo de cargas que pode colocar") 
+-            }
+-            else{
+-                const x = (-1 + 2*(event.offsetX)/canvas.width);
+-                const y = -1 + 2*(canvas.height-event.offsetY)/canvas.height;
+-                charges.push(MV.vec2(x,y));
+-                chargevalues.push(-1.0);
+-            }
+-        } 
+-    }
+-);
+     window.requestAnimationFrame(animate);
+ }
+ 
+-UTILS.loadShadersFromURLS(["shader1.vert", "shader1.frag", "shader2.vert", "shader2.frag"]).then(s => setup(s));
+\ No newline at end of file
++UTILS.loadShadersFromURLS(["shader1.vert", "shader1.frag", "shader2.vert", "shader2.frag"]).then(s => setup(s));
+diff --git i/projetos/proj1/index.html w/projetos/proj1/index.html
+index 08c1420..1394950 100644
+--- i/projetos/proj1/index.html
++++ w/projetos/proj1/index.html
+@@ -2,8 +2,6 @@
+ <html>
+     <head>
+         <script type="module" src="./app.js"></script>
+-    </head>
+-    <head>
+         <link rel="stylesheet" href="styles.css">
+         <title>Projecto 1</title>
+     </head>
+@@ -12,4 +10,4 @@
+             Oops! Something went wrong!
+         </canvas>
+     </body>
+-</html>
+\ No newline at end of file
++</html>
+diff --git i/projetos/proj1/shaders/shader1.vert w/projetos/proj1/shaders/shader1.vert
+index 5dab959..0c196dc 100644
+--- i/projetos/proj1/shaders/shader1.vert
++++ w/projetos/proj1/shaders/shader1.vert
+@@ -1,12 +1,15 @@
+ precision highp float;
+-attribute vec4 vPosition;
++// xy = grid point, z = 0 for the segment origin, 1 for the end displaced by the field
++attribute vec3 vPosition;
+ uniform float table_height, table_width;
+ varying vec4 fcolor;
+ const int MAX_CHARGES=20;
+ uniform vec2 uPosition[MAX_CHARGES];
+ uniform float values[MAX_CHARGES];
++uniform int nCharges;
+ 
+ #define TWOPI 6.28318530718
++#define MAX_LENGTH 0.25
+ 
+ // convert angle to hue; returns RGB
+ // colors corresponding to (angle mod TWOPI):
+@@ -16,24 +19,35 @@ vec3 angle_to_hue(float angle) {
+   return clamp((abs(fract(angle+vec3(3.0, 2.0, 1.0)/3.0)*6.0-3.0)-1.0), 0.0, 1.0);
+ }
+ 
+-vec3 hsv2rgb(vec3 c)
+-{
+-    vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
+-    vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
+-    return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
+-}
+-
+ vec4 colorize(vec2 f)
+ {
+     float a = atan(f.y, f.x);
+     return vec4(angle_to_hue(a-TWOPI), 1.);
+ }
+ 
+-void main()
++// E = sum k*q*(p-c)/|p-c|^3, with k*q folded into values[i]
++vec2 field(vec2 p)
+ {
+-    gl_PointSize = 4.0;
+-    gl_Position = vPosition / vec4(vec2(table_width/2.0, table_height/2.0), 1.0, 1.0);
+-    fcolor = colorize(vec2(vPosition.x, vPosition.y));
++    vec2 e = vec2(0.0);
++    for(int i = 0; i < MAX_CHARGES; i++) {
++        if(i >= nCharges) break;
++        vec2 d = p - uPosition[i];
++        float r = length(d);
++        if(r > 0.0)
++            e += values[i] * d / (r*r*r);
++    }
++    return e;
+ }
+ 
++void main()
++{
++    vec2 p = vPosition.xy;
++    vec2 e = field(p);
++    float len = length(e);
++    if(len > MAX_LENGTH)
++        e *= MAX_LENGTH / len;
+ 
++    p += vPosition.z * e;
++    gl_Position = vec4(p / vec2(table_width/2.0, table_height/2.0), 0.0, 1.0);
++    fcolor = colorize(e);
++}
+diff --git i/projetos/proj1/shaders/shader2.frag w/projetos/proj1/shaders/shader2.frag
+index 146a6cd..8cd1e51 100644
+--- i/projetos/proj1/shaders/shader2.frag
++++ w/projetos/proj1/shaders/shader2.frag
+@@ -1,7 +1,22 @@
+-precision highp float;
+-varying vec4 fcolor;
+-
+-void main()
+-{
+-    gl_FragColor = fcolor;
+-}
+\ No newline at end of file
++precision highp float;
++varying float charge;
++
++void main()
++{
++    // gl_PointCoord in [0,1]^2 -> centered in [-1,1]^2
++    vec2 p = gl_PointCoord * 2.0 - 1.0;
++    p.y = -p.y;
++    if(length(p) > 1.0) discard;
++
++    // "+" for positive charges, "-" for negative ones, drawn in white on the disc
++    bool horizontal = abs(p.y) < 0.15 && abs(p.x) < 0.6;
++    bool vertical = abs(p.x) < 0.15 && abs(p.y) < 0.6;
++    bool sign = horizontal || (charge > 0.0 && vertical);
++
++    if(sign)
++        gl_FragColor = vec4(1.0);
++    else if(charge > 0.0)
++        gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0);
++    else
++        gl_FragColor = vec4(0.0, 1.0, 0.0, 1.0);
++}
+diff --git i/projetos/proj1/shaders/shader2.vert w/projetos/proj1/shaders/shader2.vert
+index b37e83b..bee906b 100644
+--- i/projetos/proj1/shaders/shader2.vert
++++ w/projetos/proj1/shaders/shader2.vert
+@@ -1,28 +1,12 @@
+-precision highp float;
+-attribute vec4 vPosition;
+-uniform float theta;
+-varying vec4 fcolor;
+-attribute float charge;
+-
+-
+-void main()
+-{
+-    gl_PointSize = 10.0; 
+-    float s = sin( theta );
+-    float c = cos( theta );
+-    if(charge == 1.0)
+-     {
+-    gl_Position.x = -s * vPosition.y + c * vPosition.x;
+-    gl_Position.y = s * vPosition.x + c * vPosition.y;
+-    gl_Position.z = 0.0;
+-    gl_Position.w = 1.0;
+-    fcolor =  vec4(1.0, 0.0, 0.0, 1.0);
+-    }
+-    else{
+-    gl_Position.x = s * vPosition.y + c * vPosition.x;
+-    gl_Position.y = -s * vPosition.x + c * vPosition.y;
+-    gl_Position.z = 0.0;
+-    gl_Position.w = 1.0;
+-    fcolor =  vec4(0.0, 1.0, 0.0, 1.0);
+-    }
+-}
++precision highp float;
++// xy = charge position in world coordinates, z = charge sign
++attribute vec3 vPosition;
++uniform float table_height, table_width;
++varying float charge;
++
++void main()
++{
++    gl_PointSize = 20.0;
++    gl_Position = vec4(vPosition.xy / vec2(table_width/2.0, table_height/2.0), 0.0, 1.0);
++    charge = vPosition.z;
++}
+
+==================================================================
+PART 2 - CHANGES REVERSED (unfinished rewrite, never wired into app.js)
+Diff is from the kept version (Part 1) to the rewrite's shaders.
+==================================================================
+
+diff -ruN a/shaders/composite.frag b/shaders/composite.frag
+--- a/shaders/composite.frag	1969-12-31 23:00:00.000000000 -0100
++++ b/shaders/composite.frag	2026-10-30 15:50:26.802546099 -0100
+@@ -0,0 +1,8 @@
++precision highp float;
++varying vec2 uv;
++uniform sampler2D tex;
++
++void main()
++{
++    gl_FragColor = texture2D(tex, uv);
++}
+diff -ruN a/shaders/fade.frag b/shaders/fade.frag
+--- a/shaders/fade.frag	1969-12-31 23:00:00.000000000 -0100
++++ b/shaders/fade.frag	2026-10-30 15:50:26.802685582 -0100
+@@ -0,0 +1,7 @@
++precision highp float;
++uniform vec4 color;
++
++void main()
++{
++    gl_FragColor = color;
++}
+diff -ruN a/shaders/particle.frag b/shaders/particle.frag
+--- a/shaders/particle.frag	1969-12-31 23:00:00.000000000 -0100
++++ b/shaders/particle.frag	2026-10-30 15:50:26.804661361 -0100
+@@ -0,0 +1,7 @@
++precision highp float;
++varying vec4 fcolor;
++
++void main()
++{
++    gl_FragColor = fcolor;
++}
+\ No newline at end of file
+diff -ruN a/shaders/particle.vert b/shaders/particle.vert
+--- a/shaders/particle.vert	1969-12-31 23:00:00.000000000 -0100
++++ b/shaders/particle.vert	2026-10-30 15:50:26.804084545 -0100
+@@ -0,0 +1,20 @@
++precision highp float;
++// xy = position, zw = step taken this frame
++attribute vec4 vPosition;
++uniform float table_height, table_width;
++varying vec4 fcolor;
++
++#define TWOPI 6.28318530718
++
++vec3 angle_to_hue(float angle) {
++  angle /= TWOPI;
++  return clamp((abs(fract(angle+vec3(3.0, 2.0, 1.0)/3.0)*6.0-3.0)-1.0), 0.0, 1.0);
++}
++
++void main()
++{
++    gl_Position = vec4(vPosition.xy / vec2(table_width/2.0, table_height/2.0), 0.0, 1.0);
++    float speed = min(length(vPosition.zw) * 120.0, 1.0);
++    vec3 hue = angle_to_hue(atan(vPosition.w, vPosition.z) - TWOPI);
++    fcolor = vec4(mix(hue, vec3(1.0), 0.25) * (0.15 + 0.45 * speed), 1.0);
++}
+diff -ruN a/shaders/potential.frag b/shaders/potential.frag
+--- a/shaders/potential.frag	1969-12-31 23:00:00.000000000 -0100
++++ b/shaders/potential.frag	2026-10-30 15:50:26.801957190 -0100
+@@ -0,0 +1,29 @@
++#extension GL_OES_standard_derivatives : enable
++precision highp float;
++varying vec2 uv;
++uniform float table_height, table_width;
++const int MAX_CHARGES=20;
++uniform vec2 uPosition[MAX_CHARGES];
++uniform float values[MAX_CHARGES];
++uniform int nCharges;
++
++void main()
++{
++    vec2 p = (uv - 0.5) * vec2(table_width, table_height);
++    float v = 0.0;
++    for(int i = 0; i < MAX_CHARGES; i++) {
++        if(i >= nCharges) break;
++        v += values[i] / max(length(p - uPosition[i]), 0.01);
++    }
++
++    // log scale so the contours don't pile up around the charges
++    float t = sign(v) * log(1.0 + abs(v) * 20.0);
++    float s = 1.0 - exp(-abs(t) * 0.6);
++    vec3 col = (v > 0.0 ? vec3(0.45, 0.05, 0.14) : vec3(0.03, 0.22, 0.42)) * s;
++
++    float c = t * 3.0;
++    float d = abs(fract(c - 0.5) - 0.5) / max(fwidth(c), 1e-4);
++    col += (1.0 - min(d, 1.0)) * (0.06 + 0.2 * s);
++
++    gl_FragColor = vec4(col, 1.0);
++}
+diff -ruN a/shaders/quad.vert b/shaders/quad.vert
+--- a/shaders/quad.vert	1969-12-31 23:00:00.000000000 -0100
++++ b/shaders/quad.vert	2026-10-30 15:50:26.801402537 -0100
+@@ -0,0 +1,9 @@
++precision highp float;
++attribute vec2 vPosition;
++varying vec2 uv;
++
++void main()
++{
++    uv = vPosition * 0.5 + 0.5;
++    gl_Position = vec4(vPosition, 0.0, 1.0);
++}
+diff -ruN a/shaders/shader1.vert b/shaders/shader1.vert
+--- a/shaders/shader1.vert	2026-10-30 15:50:26.800094820 -0100
++++ b/shaders/shader1.vert	2026-10-30 15:50:26.818625929 -0100
+@@ -7,6 +7,7 @@
+ uniform vec2 uPosition[MAX_CHARGES];
+ uniform float values[MAX_CHARGES];
+ uniform int nCharges;
++uniform float alpha;
+ 
+ #define TWOPI 6.28318530718
+ #define MAX_LENGTH 0.25
+@@ -49,5 +50,6 @@
+ 
+     p += vPosition.z * e;
+     gl_Position = vec4(p / vec2(table_width/2.0, table_height/2.0), 0.0, 1.0);
+-    fcolor = colorize(e);
++    // dim tail, bright tip, so each segment reads as an arrow
++    fcolor = colorize(e) * vec4(1.0, 1.0, 1.0, alpha * mix(0.15, 1.0, vPosition.z));
+ }
+diff -ruN a/shaders/shader2.frag b/shaders/shader2.frag
+--- a/shaders/shader2.frag	2026-10-30 15:50:26.800125367 -0100
++++ b/shaders/shader2.frag	2026-10-30 15:50:26.805685554 -0100
+@@ -1,22 +1,35 @@
+ precision highp float;
+ varying float charge;
++varying float highlight;
++uniform float time;
++
++#define CORE (1.0/3.0)
+ 
+ void main()
+ {
+     // gl_PointCoord in [0,1]^2 -> centered in [-1,1]^2
+     vec2 p = gl_PointCoord * 2.0 - 1.0;
+     p.y = -p.y;
+-    if(length(p) > 1.0) discard;
++    float r = length(p);
++    if(r > 1.0) discard;
++
++    vec3 base = charge > 0.0 ? vec3(1.0, 0.15, 0.2) : vec3(0.1, 1.0, 0.45);
++
++    // output is premultiplied: glow adds light, the core is opaque
++    if(r > CORE) {
++        float g = 1.0 - (r - CORE) / (1.0 - CORE);
++        g = g * g * (0.45 + 0.15 * sin(time * 0.003 + charge) + 0.3 * highlight);
++        gl_FragColor = vec4(base * g, g);
++        return;
++    }
+ 
++    vec2 q = p / CORE;
+     // "+" for positive charges, "-" for negative ones, drawn in white on the disc
+-    bool horizontal = abs(p.y) < 0.15 && abs(p.x) < 0.6;
+-    bool vertical = abs(p.x) < 0.15 && abs(p.y) < 0.6;
++    bool horizontal = abs(q.y) < 0.15 && abs(q.x) < 0.6;
++    bool vertical = abs(q.x) < 0.15 && abs(q.y) < 0.6;
+     bool sign = horizontal || (charge > 0.0 && vertical);
++    float rim = smoothstep(0.8, 1.0, length(q)) * highlight;
+ 
+-    if(sign)
+-        gl_FragColor = vec4(1.0);
+-    else if(charge > 0.0)
+-        gl_FragColor = vec4(1.0, 0.0, 0.0, 1.0);
+-    else
+-        gl_FragColor = vec4(0.0, 1.0, 0.0, 1.0);
++    vec3 col = sign ? vec3(1.0) : base * (1.1 - 0.4 * length(q));
++    gl_FragColor = vec4(mix(col, vec3(1.0), rim), 1.0);
+ }
+diff -ruN a/shaders/shader2.vert b/shaders/shader2.vert
+--- a/shaders/shader2.vert	2026-10-30 15:50:26.800110804 -0100
++++ b/shaders/shader2.vert	2026-10-30 15:50:26.804685563 -0100
+@@ -1,12 +1,16 @@
+ precision highp float;
+-// xy = charge position in world coordinates, z = charge sign
+-attribute vec3 vPosition;
++// xy = charge position in world coordinates, z = signed magnitude, w = 1 when hovered
++attribute vec4 vPosition;
+ uniform float table_height, table_width;
++uniform float pixel_ratio;
+ varying float charge;
++varying float highlight;
+ 
+ void main()
+ {
+-    gl_PointSize = 20.0;
++    // the core takes the inner third of the sprite, the rest is glow
++    gl_PointSize = (14.0 + 5.0 * abs(vPosition.z)) * 3.0 * pixel_ratio;
+     gl_Position = vec4(vPosition.xy / vec2(table_width/2.0, table_height/2.0), 0.0, 1.0);
+     charge = vPosition.z;
++    highlight = vPosition.w;
+ }
