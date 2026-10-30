@@ -33,8 +33,10 @@ const fire_cooldown = 0.3;
 const N_TARGETS = 5;
 
 const sun = normalize(vec3(0.5, 1.0, 0.3));
-const horizon = vec3(0.72, 0.8, 0.88);
-const zenith = vec3(0.16, 0.33, 0.6);
+const skies = {
+    normal: {horizon: vec3(0.72, 0.8, 0.88), zenith: vec3(0.16, 0.33, 0.6)},
+    hills: {horizon: vec3(0.65, 0.85, 1.0), zenith: vec3(0.2, 0.45, 0.9)}
+};
 
 //the four original views, plus a free orbit camera and a chase camera
 const ortho_views = {
@@ -48,8 +50,25 @@ let camera = '5';
 const orbit = {yaw: 2.3, pitch: 0.45, dist: 6};
 let shake = 0;
 
-const tank = {x: 0, z: 0, heading: 0, turret: 0, elevation: 20, rotL: 0, rotR: 0, recoil: 0, cooldown: 0};
-let bullets = [];//{p, v}
+function newTank(x, z, heading)
+{
+    return {x, z, heading, turret: 0, elevation: 20, rotL: 0, rotR: 0, recoil: 0, cooldown: 0, hp: 5, flash: 0, dead: 0};
+}
+
+const tank = newTank(0, 0, 0);
+const PLAYER_HP = 5;
+const palettes = {
+    player: {hull: [0.24, 0.3, 0.16], deck: [0.3, 0.36, 0.2], nose: [0.34, 0.4, 0.22], turret: [0.36, 0.42, 0.24], barrel: [0.2, 0.24, 0.14]},
+    enemy: {hull: [0.42, 0.12, 0.1], deck: [0.52, 0.16, 0.12], nose: [0.58, 0.2, 0.14], turret: [0.6, 0.22, 0.16], barrel: [0.25, 0.08, 0.07]}
+};
+const battle = {on: false, wave: 0, next: 0, kills: 0};
+let enemies = [];
+let hurt = 0;
+let radar = true;
+let hills = false;
+let ringsCollected = 0;
+let clock = 0;
+let bullets = [];//{p, v, owner}
 let particles = [];//{kind, p, v, life, max, size, color, spin}
 let scorches = [];//{x, z, size, life}
 let targets = [];//{x, z, phase, alive, respawn, grow}
@@ -108,6 +127,9 @@ function setup(shaders)
                 document.getElementById("hud").classList.toggle("hidden");
                 break;
         }
+        if(event.code == "KeyB") toggleBattle();
+        if(event.code == "KeyG") toggleHills();
+        if(event.code == "KeyM") radar = !radar;
         if(event.code == "Space" || event.code.startsWith("Arrow")) event.preventDefault();
         updateHud();
     }
@@ -130,6 +152,12 @@ function setup(shaders)
         VP_DISTANCE = Math.min(Math.max(VP_DISTANCE * f, 1.1), 10);
     }, {passive: false});
 
+    for(const [id, action] of [["btn-battle", toggleBattle], ["btn-hills", toggleHills]]) {
+        const button = document.getElementById(id);
+        //blur so Space fires the cannon instead of pressing the button again
+        button.addEventListener("click", () => { action(); button.blur(); updateHud(); });
+    }
+
     updateHud();
     window.requestAnimationFrame(render);
 }
@@ -141,6 +169,14 @@ function resize_canvas(event)
     canvas.height = window.innerHeight * ratio;
     aspect = canvas.width / canvas.height;
     gl.viewport(0,0,canvas.width, canvas.height);
+    const frame = document.getElementById("radar");
+    frame.style.width = frame.style.height = radarSize() + "px";
+}
+
+//radar side, in css pixels
+function radarSize()
+{
+    return Math.round(Math.min(window.innerWidth, window.innerHeight) * 0.28);
 }
 
 function toast(message)
@@ -158,6 +194,33 @@ function updateHud()
     document.getElementById("shots").textContent = score.shots;
     document.getElementById("accuracy").textContent = score.shots ? Math.round(100*score.hits/score.shots) + "%" : "–";
     document.getElementById("camera").textContent = camera_names[camera];
+    document.getElementById("battle-box").classList.toggle("off", !battle.on);
+    document.getElementById("hearts").textContent = "♥".repeat(tank.hp) + "♡".repeat(PLAYER_HP - tank.hp);
+    document.getElementById("wave").textContent = battle.wave;
+    document.getElementById("kills").textContent = battle.kills;
+    document.getElementById("rings-box").classList.toggle("off", !hills);
+    document.getElementById("rings").textContent = ringsCollected;
+    document.getElementById("btn-battle").classList.toggle("active", battle.on);
+    document.getElementById("btn-hills").classList.toggle("active", hills);
+    document.getElementById("radar").classList.toggle("off", !radar);
+}
+
+function toggleBattle()
+{
+    battle.on = !battle.on;
+    battle.wave = 0;
+    battle.kills = 0;
+    battle.next = 1;
+    enemies = [];
+    bullets = bullets.filter(b => b.owner == 'player');
+    tank.hp = PLAYER_HP;
+    toast(battle.on ? "Batalha! Sobrevive às vagas" : "Batalha terminada");
+}
+
+function toggleHills()
+{
+    hills = !hills;
+    toast(hills ? "Green Hills" : "Arena normal");
 }
 
 //---------------------------------------------------------------- simulation
@@ -175,32 +238,169 @@ function newTarget()
 }
 
 //world transform of the barrel, built with the same chain tankbody() uses
-function barrelMatrix()
+function barrelMatrix(t)
 {
-    let m = translate(tank.x, 0, tank.z);
-    m = mult(m, rotateY(tank.heading));
+    let m = translate(t.x, 0, t.z);
+    m = mult(m, rotateY(t.heading));
     m = mult(m, translate(-0.2, 0.5, 0));
-    m = mult(m, rotateY(tank.turret));
+    m = mult(m, rotateY(t.turret));
     m = mult(m, translate(0.25, 0, 0));
-    return mult(m, rotateZ(-90 + tank.elevation));
+    return mult(m, rotateZ(-90 + t.elevation));
 }
 
-function fire()
+function fire(t)
 {
-    const m = barrelMatrix();
+    const m = barrelMatrix(t);
     const tip = mult(m, vec4(0, 1.03, 0, 1));
     const dir = normalize(vec3(mult(m, vec4(0, 1, 0, 0))));
     const p = [tip[0], tip[1], tip[2]];
-    bullets.push({p, v: dir.map(c => c * speed)});
-    tank.recoil = 1;
-    tank.cooldown = fire_cooldown;
-    shake = Math.max(shake, 0.04);
-    score.shots++;
+    const owner = t == tank ? 'player' : 'enemy';
+    bullets.push({p, v: dir.map(c => c * speed), owner});
+    t.recoil = 1;
+    t.cooldown = fire_cooldown;
+    shake = Math.max(shake, owner == 'player' ? 0.04 : 0.015);
+    if(owner == 'player') score.shots++;
     spawn('flash', p, [0, 0, 0], 0.12, 0.35, [1.0, 0.75, 0.3]);
     for(let i = 0; i < 6; i++) {
         spawn('smoke', p, dir.map(c => c * (0.3 + Math.random()) + (Math.random() - 0.5) * 0.4), 0.9, 0.12, [0.75, 0.75, 0.75]);
     }
     updateHud();
+}
+
+const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), hi);
+const wrapAngle = a => ((a + 180) % 360 + 360) % 360 - 180;
+//forward is (cos h, -sin h), so this is the heading that points along (dx, dz)
+const angleTo = (dx, dz) => Math.atan2(-dz, dx) * 180 / Math.PI;
+
+//moves a hull forward (-1..1) while turning at turnRate degrees per second
+function driveTank(t, forward, turnRate, maxSpeed, dt)
+{
+    const h = t.heading * Math.PI / 180;
+    t.heading += turnRate * dt;
+    t.x = clamp(t.x + Math.cos(h) * forward * maxSpeed * dt, -arena, arena);
+    t.z = clamp(t.z - Math.sin(h) * forward * maxSpeed * dt, -arena, arena);
+    t.rotL -= (forward - turnRate / 140) * 100 * dt;
+    t.rotR -= (forward + turnRate / 140) * 100 * dt;
+
+    if((forward || turnRate) && Math.random() < 0.5) {
+        const side = Math.random() < 0.5 ? 1 : -1;
+        const back = -0.5 * Math.sign(forward);
+        spawn('smoke', [t.x + Math.cos(h)*back - Math.sin(h)*0.55*side, 0.03, t.z - Math.sin(h)*back - Math.cos(h)*0.55*side],
+              [0, 0.25, 0], 0.7, 0.08, [0.55, 0.48, 0.36]);
+    }
+}
+
+function startWave()
+{
+    battle.wave++;
+    for(let i = 0; i < Math.min(battle.wave, 4); i++) {
+        let x, z;
+        do {
+            const s = (Math.random() * 2 - 1) * 5.2;
+            const edge = Math.floor(Math.random() * 4);
+            [x, z] = [[5.2, s], [-5.2, s], [s, 5.2], [s, -5.2]][edge];
+        } while(Math.hypot(x - tank.x, z - tank.z) < 3.5);
+        const e = newTank(x, z, angleTo(tank.x - x, tank.z - z));
+        Object.assign(e, {hp: 2, side: Math.random() < 0.5 ? 1 : -1, wander: Math.random() * 6, cooldown: 1.5 + Math.random(), aimError: 0});
+        enemies.push(e);
+    }
+    toast("Vaga " + battle.wave);
+    updateHud();
+}
+
+//circles the player at mid range, aiming with the ballistic angle for the distance
+function enemyAI(e, dt)
+{
+    const dx = tank.x - e.x, dz = tank.z - e.z;
+    const dist = Math.hypot(dx, dz);
+    const toPlayer = angleTo(dx, dz);
+    e.wander += dt * 0.7;
+    const offset = dist > 4.5 ? 0 : dist < 2.5 ? 150 : 90 * e.side;
+    const diff = wrapAngle(toPlayer + offset + 25 * Math.sin(e.wander) - e.heading);
+    driveTank(e, Math.abs(diff) < 70 ? 1 : 0.35, clamp(diff * 4, -50, 50), 1.1, dt);
+
+    const aim = wrapAngle(toPlayer - e.heading - e.turret);
+    e.turret += clamp(aim * 5, -60, 60) * dt;
+    const range = Math.max(dist - 1.1, 0.3);
+    const ballistic = 0.5 * Math.asin(Math.min(-g * range / (speed * speed), 1)) * 180 / Math.PI;
+    e.elevation = clamp(e.elevation + clamp((ballistic + e.aimError - e.elevation) * 4, -40, 40) * dt, 0, 45);
+
+    e.cooldown -= dt;
+    if(!tank.dead && Math.abs(aim) < 4 && e.cooldown <= 0) {
+        fire(e);
+        e.cooldown = (2.2 + 1.5 * Math.random()) * Math.max(0.5, 1 - 0.08 * (battle.wave - 1));
+        e.aimError = (Math.random() - 0.5) * 5;
+    }
+    if(e.hp == 1 && Math.random() < 0.3) spawn('smoke', [e.x, 0.5, e.z], [0, 0.6, 0], 1.2, 0.12, [0.2, 0.19, 0.18]);
+}
+
+const hitsTank = (b, t) => Math.hypot(b.p[0] - t.x, b.p[1] - 0.35, b.p[2] - t.z) < 0.55;
+
+function damagePlayer(p)
+{
+    tank.hp--;
+    tank.flash = 0.15;
+    hurt = 1;
+    explode(p, false);
+    shake = Math.max(shake, 0.12);
+    if(tank.hp <= 0) {
+        tank.dead = 3;
+        explode([tank.x, 0.4, tank.z], true);
+        explode([tank.x + 0.3, 0.7, tank.z - 0.2], true);
+        toast("Destruído! Vaga " + battle.wave);
+    }
+    updateHud();
+}
+
+function damageEnemy(e, p)
+{
+    e.hp--;
+    e.flash = 0.15;
+    score.hits++;
+    explode(p, false);
+    if(e.hp <= 0) {
+        enemies.splice(enemies.indexOf(e), 1);
+        battle.kills++;
+        explode([e.x, 0.4, e.z], true);
+        toast("Abatido!");
+    }
+    updateHud();
+}
+
+//tanks push each other apart, and the player also bumps into palm trunks
+function separate()
+{
+    const bodies = tank.dead ? [...enemies] : [tank, ...enemies];
+    for(let i = 0; i < bodies.length; i++) {
+        for(let j = i + 1; j < bodies.length; j++) {
+            const a = bodies[i], b = bodies[j];
+            const dx = b.x - a.x, dz = b.z - a.z, d = Math.hypot(dx, dz) || 1e-3;
+            if(d < 1.2) {
+                const push = (1.2 - d) / 2 / d;
+                a.x -= dx * push; a.z -= dz * push;
+                b.x += dx * push; b.z += dz * push;
+            }
+        }
+    }
+    if(hills) {
+        for(const t of bodies) {
+            for(const p of palms) {
+                const dx = t.x - p.x, dz = t.z - p.z, d = Math.hypot(dx, dz) || 1e-3;
+                if(d < 0.75) { t.x = p.x + dx / d * 0.75; t.z = p.z + dz / d * 0.75; }
+            }
+        }
+    }
+    for(const t of bodies) { t.x = clamp(t.x, -arena, arena); t.z = clamp(t.z, -arena, arena); }
+}
+
+function newRing()
+{
+    let x, z;
+    do {
+        x = (Math.random() * 2 - 1) * 5;
+        z = (Math.random() * 2 - 1) * 5;
+    } while(Math.hypot(x - tank.x, z - tank.z) < 1.5);
+    return {x, z, phase: Math.random() * 6};
 }
 
 function spawn(kind, p, v, life, size, color)
@@ -227,32 +427,62 @@ function explode(p, big)
 
 function update(dt)
 {
-    //driving: arrows move and turn the hull, a/d turn the turret, w/s raise the cannon
-    const drive = (held.has("ArrowUp") ? 1 : 0) - (held.has("ArrowDown") ? 1 : 0);
-    const turn = (held.has("ArrowLeft") ? 1 : 0) - (held.has("ArrowRight") ? 1 : 0);
-    const shift = held.has("ShiftLeft") || held.has("ShiftRight");
-    const h = tank.heading * Math.PI / 180;
-    tank.heading += turn * 70 * dt;
-    tank.x = Math.min(Math.max(tank.x + Math.cos(h) * drive * 1.6 * dt, -arena), arena);
-    tank.z = Math.min(Math.max(tank.z - Math.sin(h) * drive * 1.6 * dt, -arena), arena);
-    tank.rotL -= (drive - turn * 0.5) * 100 * dt;
-    tank.rotR -= (drive + turn * 0.5) * 100 * dt;
-    if(held.has("KeyA")) tank.turret += 80 * dt;
-    if(held.has("KeyD")) tank.turret -= 80 * dt;
-    if(held.has("KeyW") && !shift) tank.elevation = Math.min(tank.elevation + 40 * dt, 45);
-    if(held.has("KeyS") && !shift) tank.elevation = Math.max(tank.elevation - 40 * dt, 0);
+    clock += dt;
+    if(!tank.dead) {
+        //driving: arrows move and turn the hull, a/d turn the turret, w/s raise the cannon
+        const drive = (held.has("ArrowUp") ? 1 : 0) - (held.has("ArrowDown") ? 1 : 0);
+        const turn = (held.has("ArrowLeft") ? 1 : 0) - (held.has("ArrowRight") ? 1 : 0);
+        const shift = held.has("ShiftLeft") || held.has("ShiftRight");
+        driveTank(tank, drive, turn * 70, 1.6, dt);
+        if(held.has("KeyA")) tank.turret += 80 * dt;
+        if(held.has("KeyD")) tank.turret -= 80 * dt;
+        if(held.has("KeyW") && !shift) tank.elevation = Math.min(tank.elevation + 40 * dt, 45);
+        if(held.has("KeyS") && !shift) tank.elevation = Math.max(tank.elevation - 40 * dt, 0);
 
-    if((drive || turn) && Math.random() < 0.5) {
-        const side = Math.random() < 0.5 ? 1 : -1;
-        const back = -0.5 * drive;
-        spawn('smoke', [tank.x + Math.cos(h)*back - Math.sin(h)*0.55*side, 0.03, tank.z - Math.sin(h)*back - Math.cos(h)*0.55*side],
-              [0, 0.25, 0], 0.7, 0.08, [0.55, 0.48, 0.36]);
+        tank.cooldown -= dt;
+        if(held.has("Space") && tank.cooldown <= 0) fire(tank);
+    }
+    else if((tank.dead -= dt) <= 0) {
+        Object.assign(tank, newTank(0, 0, tank.heading));
+        if(battle.on) {
+            enemies = [];
+            battle.wave = 0;
+            battle.next = 1.5;
+        }
+        toast("De volta!");
+        updateHud();
     }
 
-    tank.cooldown -= dt;
-    if(held.has("Space") && tank.cooldown <= 0) fire();
-    tank.recoil = Math.max(tank.recoil - dt * 4, 0);
+    if(battle.on && !enemies.length && !tank.dead && (battle.next -= dt) <= 0) {
+        startWave();
+        battle.next = 2.5;
+    }
+    for(const e of enemies) enemyAI(e, dt);
+    separate();
+
+    for(const t of [tank, ...enemies]) {
+        t.recoil = Math.max(t.recoil - dt * 4, 0);
+        t.flash = Math.max(t.flash - dt, 0);
+    }
     shake = Math.max(shake - dt * 0.4, 0);
+    hurt = Math.max(hurt - dt * 1.5, 0);
+    document.getElementById("damage").style.opacity = hurt;
+
+    if(hills && !tank.dead) {
+        for(const r of rings) {
+            r.phase += dt;
+            if(Math.hypot(tank.x - r.x, tank.z - r.z) < 0.6) {
+                ringsCollected++;
+                spawn('flash', [r.x, 0.45, r.z], [0, 0, 0], 0.3, 0.6, [1.0, 0.85, 0.3]);
+                for(let i = 0; i < 10; i++) {
+                    const a = Math.random() * 2 * Math.PI;
+                    spawn('debris', [r.x, 0.45, r.z], [Math.cos(a) * 1.5, 2 + Math.random() * 2, Math.sin(a) * 1.5], 0.7, 0.04, [1.0, 0.85, 0.2]);
+                }
+                Object.assign(r, newRing());
+                updateHud();
+            }
+        }
+    }
 
     //bullets fly in world space, so turning the tank after the shot doesn't bend them
     for(let i = bullets.length - 1; i >= 0; i--) {
@@ -261,8 +491,17 @@ function update(dt)
         for(let c = 0; c < 3; c++) b.p[c] += b.v[c] * dt;
         if(Math.random() < 0.7) spawn('smoke', b.p, [0, 0.1, 0], 0.5, 0.05, [0.85, 0.85, 0.85]);
 
-        const hit = targets.find(t => t.alive && t.grow > 0.9 && Math.hypot(b.p[0] - t.x, b.p[1] - 0.65, b.p[2] - t.z) < 0.35);
-        if(hit) {
+        const enemyHit = b.owner == 'player' && enemies.find(e => hitsTank(b, e));
+        const hit = !battle.on && b.owner == 'player' && targets.find(t => t.alive && t.grow > 0.9 && Math.hypot(b.p[0] - t.x, b.p[1] - 0.65, b.p[2] - t.z) < 0.35);
+        if(enemyHit) {
+            damageEnemy(enemyHit, [...b.p]);
+            bullets.splice(i, 1);
+        }
+        else if(b.owner == 'enemy' && !tank.dead && hitsTank(b, tank)) {
+            damagePlayer([...b.p]);
+            bullets.splice(i, 1);
+        }
+        else if(hit) {
             hit.alive = false;
             hit.respawn = 1.5;
             score.hits++;
@@ -338,6 +577,15 @@ function setColor(r, g, b, a = 1, emissive = 0)
 {
     gl.uniform4f(gl.getUniformLocation(program, "color"), r, g, b, a);
     gl.uniform1f(gl.getUniformLocation(program, "emissive"), emissive);
+    gl.uniform1f(gl.getUniformLocation(program, "pattern"), 0);
+}
+
+//checkered soil with grass above grassLine, both in object space; call after setColor
+function setPattern(freq, grassLine)
+{
+    gl.uniform1f(gl.getUniformLocation(program, "pattern"), 1);
+    gl.uniform3fv(gl.getUniformLocation(program, "checkFreq"), flatten(vec3(...freq)));
+    gl.uniform1f(gl.getUniformLocation(program, "grassLine"), grassLine);
 }
 
 function draw(shape)
@@ -349,13 +597,14 @@ function draw(shape)
 //draws the floor
 function Tile()
 {
+    const [dark, light] = hills ? [[0.3, 0.66, 0.2], [0.38, 0.78, 0.26]] : [[0.22, 0.42, 0.18], [0.28, 0.52, 0.22]];
     for(let z = -30; z < 30 ; z++){
         for(let x = -30; x < 30 ; x++){
             if((z%2 == 0 && x%2 != 0) || (z%2 != 0 && x%2 == 0)){
-                setColor(0.22, 0.42, 0.18);
+                setColor(...dark);
             }
             else{
-                setColor(0.28, 0.52, 0.22);
+                setColor(...light);
             }
             pushMatrix();
                 multTranslation([x,0,z]);
@@ -381,13 +630,6 @@ function wheels(z, rot){
     }
 }
 
-function rightwheels(){
-    wheels(4.5, tank.rotR);
-}
-
-function leftwheels(){
-    wheels(-4.5, tank.rotL);
-}
 
 function axis(){
     setColor(0.5, 0.5, 0.5);
@@ -401,22 +643,25 @@ function axis(){
     }
 }
 
-function tankbody(){
-    setColor(0.24, 0.3, 0.16);
+function tankbody(t, palette){
+    //a hit makes the whole tank flash
+    const glow = t.flash > 0 ? 0.7 : 0;
+    const paint = c => setColor(...c, 1, glow);
+    paint(palette.hull);
     pushMatrix();
         multTranslation([0.0,0.21,0.0]);
         multScale([1, 1/10,1.2]);
         draw(CUBE);
     popMatrix();
 
-    setColor(0.3, 0.36, 0.2);
+    paint(palette.deck);
     pushMatrix();
         multTranslation([0,0.32,0]);
         multScale([1,1/8,1]);
         draw(CUBE);
     popMatrix();
 
-    setColor(0.34, 0.4, 0.22);
+    paint(palette.nose);
     pushMatrix();
         multTranslation([0.66,0.2,0]);
         multRotationZ(-90);
@@ -431,24 +676,24 @@ function tankbody(){
         draw(PYRAMID);
     popMatrix();
 
-    setColor(0.36, 0.42, 0.24);
+    paint(palette.turret);
     pushMatrix();
         multTranslation([-0.2,0.5,0]);
-        multRotationY(tank.turret);
+        multRotationY(t.turret);
         pushMatrix();
             multScale([1/2,1/4,1/2]);
             draw(CYLINDRE);
         popMatrix();
         multTranslation([0.25,0,0]);
         pushMatrix();
-            multRotationZ(-90+tank.elevation);
+            multRotationZ(-90+t.elevation);
             //recoil slides the barrel back along its own axis
-            multTranslation([0,0.53 - 0.18*tank.recoil,0]);
-            setColor(0.2, 0.24, 0.14);
+            multTranslation([0,0.53 - 0.18*t.recoil,0]);
+            paint(palette.barrel);
             multScale([1/8,1,1/8]);
             draw(CYLINDRE);
         popMatrix();
-        setColor(0.3, 0.36, 0.2);
+        paint(palette.deck);
         multScale([1/6,1/6,1/6]);
         draw(CUBE);
     popMatrix();
@@ -484,7 +729,8 @@ function bullet(b){
     pushMatrix();
         multTranslation(b.p);
         multScale([2*bullet_radius, 2*bullet_radius, 2*bullet_radius]);
-        setColor(1.0, 0.8, 0.4, 1, 0.8);
+        if(b.owner == 'enemy') setColor(1.0, 0.35, 0.25, 1, 0.8);
+        else setColor(1.0, 0.8, 0.4, 1, 0.8);
         draw(SPHERE);
     popMatrix();
 }
@@ -502,21 +748,172 @@ function debris(p){
     popMatrix();
 }
 
-//everything that casts a shadow
-function casters(){
+function drawTank(t, palette){
     pushMatrix();
-        multTranslation([tank.x,0.0,tank.z]);
-        multRotationY(tank.heading);
-        multTranslation([-0.03*tank.recoil, 0, 0]);
-        tankbody();
+        multTranslation([t.x,0.0,t.z]);
+        multRotationY(t.heading);
+        multTranslation([-0.03*t.recoil, 0, 0]);
+        tankbody(t, palette);
         pushMatrix();
             multTranslation([0,0.08,0]);
-            rightwheels();
-            leftwheels();
+            wheels(4.5, t.rotR);
+            wheels(-4.5, t.rotL);
             axis();
         popMatrix();
     popMatrix();
-    for(const t of targets) if(t.alive) target(t);
+}
+
+//------------------------------------------------ green hills scenery
+
+//fixed pseudo-random numbers, so the scenery is the same on every load
+let seed = 7;
+const rnd = () => (seed = seed * 16807 % 2147483647) / 2147483647;
+//heading that points away from the centre, so local -x points at it
+const facingCentre = (x, z) => angleTo(x, z);
+
+const palms = [[-5.6, -5.6], [5.6, -5.6], [-5.6, 5.6], [5.6, 5.6], [0.4, -5.7]].map(([x, z]) => ({x, z}));
+const flowers = [[5.7, 2.6], [5.7, -2.4], [-5.7, 2.4], [-5.7, -2.6], [2.6, 5.7], [-2.4, 5.7], [2.8, -5.7], [-2.6, -5.7]].map(([x, z]) => ({x, z}));
+const hillsAround = Array.from({length: 11}, (_, i) => {
+    const a = (i + rnd() * 0.5) / 11 * 2 * Math.PI, r = 15 + rnd() * 9;
+    return {x: r * Math.cos(a), z: r * Math.sin(a), w: 7 + rnd() * 6, h: 6 + rnd() * 6};
+});
+const clouds = Array.from({length: 8}, (_, i) => ({a: i / 8 * 2 * Math.PI + rnd(), r: 12 + rnd() * 10, y: 6 + rnd() * 3, s: 0.8 + rnd() * 0.6}));
+const rings = Array.from({length: 6}, () => newRing());
+
+function palm(p){
+    pushMatrix();
+        multTranslation([p.x, 0, p.z]);
+        //the trunk bends towards the arena, segment by segment
+        multRotationY(facingCentre(p.x, p.z));
+        for(let i = 0; i < 6; i++) {
+            multRotationZ(3 + 0.6 * Math.sin(clock * 1.3 + p.x));
+            pushMatrix();
+                multTranslation([0, 0.2, 0]);
+                multScale([0.17 - 0.012*i, 0.42, 0.17 - 0.012*i]);
+                setColor(...(i % 2 ? [0.55, 0.38, 0.18] : [0.45, 0.3, 0.14]));
+                draw(CYLINDRE);
+            popMatrix();
+            multTranslation([0, 0.4, 0]);
+        }
+        setColor(0.4, 0.22, 0.08);
+        for(let k = 0; k < 3; k++) {
+            pushMatrix();
+                multRotationY(k * 120);
+                multTranslation([0.09, -0.06, 0]);
+                multScale([0.12, 0.12, 0.12]);
+                draw(SPHERE);
+            popMatrix();
+        }
+        setColor(0.16, 0.55, 0.14);
+        for(let k = 0; k < 7; k++) {
+            pushMatrix();
+                multRotationY(k * 360/7);
+                multRotationZ(-25 - 8 * Math.sin(clock * 1.7 + k));
+                multTranslation([0.55, 0, 0]);
+                multScale([1.1, 0.03, 0.26]);
+                draw(CUBE);
+            popMatrix();
+        }
+    popMatrix();
+}
+
+function flower(f){
+    pushMatrix();
+        multTranslation([f.x, 0, f.z]);
+        setColor(0.2, 0.5, 0.15);
+        pushMatrix();
+            multTranslation([0, 0.42, 0]);
+            multScale([0.05, 0.84, 0.05]);
+            draw(CYLINDRE);
+        popMatrix();
+        //the head faces the arena; after rotating z its local y is the face normal
+        multTranslation([0, 0.9, 0]);
+        multRotationY(facingCentre(f.x, f.z));
+        multRotationZ(90);
+        multRotationY(clock * 30);
+        setColor(0.4, 0.22, 0.08);
+        pushMatrix();
+            multScale([0.24, 0.06, 0.24]);
+            draw(CYLINDRE);
+        popMatrix();
+        setColor(1.0, 0.82, 0.1);
+        for(let k = 0; k < 10; k++) {
+            pushMatrix();
+                multRotationY(k * 36);
+                multTranslation([0.19, 0, 0]);
+                multScale([0.16, 0.03, 0.08]);
+                draw(CUBE);
+            popMatrix();
+        }
+    popMatrix();
+}
+
+function ring(r){
+    pushMatrix();
+        multTranslation([r.x, 0.45 + 0.06 * Math.sin(r.phase * 3), r.z]);
+        multRotationY(r.phase * 140);
+        multRotationX(90);
+        multScale([0.5, 0.5, 0.5]);
+        setColor(1.0, 0.78, 0.15, 1, 0.25);
+        draw(TORUS);
+    popMatrix();
+}
+
+//backdrop that doesn't cast shadows: the checkered cliff under the arena, then water, hills and clouds
+function scenery(persp){
+    pushMatrix();
+        multTranslation([-0.1, -1.03, -0.1]);
+        multScale([12, 2, 12]);
+        setColor(1, 1, 1);
+        setPattern([24, 4, 24], 0.42);
+        draw(CUBE);
+    popMatrix();
+    //far scenery only fits the perspective cameras' depth range
+    if(!persp) return;
+
+    pushMatrix();
+        multTranslation([0, -1.6, 0]);
+        multScale([90, 0.02, 90]);
+        setColor(0.12, 0.42, 0.8);
+        draw(CUBE);
+    popMatrix();
+    for(const h of hillsAround) {
+        pushMatrix();
+            multTranslation([h.x, -1.6, h.z]);
+            multScale([h.w, h.h, h.w]);
+            setColor(1, 1, 1);
+            setPattern([8, 8, 8], 0.3);
+            draw(SPHERE);
+        popMatrix();
+    }
+    setColor(1, 1, 1, 1, 0.45);
+    for(const c of clouds) {
+        const a = c.a + clock * 0.01;
+        pushMatrix();
+            multTranslation([c.r * Math.cos(a), c.y, c.r * Math.sin(a)]);
+            multRotationY(-a * 180 / Math.PI);
+            multScale([c.s, c.s, c.s]);
+            for(const [x, y, z, w] of [[0, 0, 0, 2.4], [1.2, -0.2, 0.3, 1.7], [-1.3, -0.25, -0.2, 1.6], [0.3, 0.5, -0.3, 1.5]]) {
+                pushMatrix();
+                    multTranslation([x, y, z]);
+                    multScale([w, w * 0.6, w * 0.8]);
+                    draw(SPHERE);
+                popMatrix();
+            }
+        popMatrix();
+    }
+}
+
+//everything that casts a shadow
+function casters(){
+    if(!tank.dead) drawTank(tank, palettes.player);
+    for(const e of enemies) drawTank(e, palettes.enemy);
+    if(hills) {
+        for(const p of palms) palm(p);
+        for(const f of flowers) flower(f);
+        for(const r of rings) ring(r);
+    }
+    if(!battle.on) for(const t of targets) if(t.alive) target(t);
     for(const b of bullets) bullet(b);
     for(const p of particles) if(p.kind == 'debris') debris(p);
 }
@@ -577,11 +974,12 @@ function shadowMatrix()
 function setupCamera()
 {
     const persp = camera == '5' || camera == '6';
+    let projection;
     if(persp) {
-        mProjection = perspective(50, aspect, 0.1, 100);
+        projection = perspective(50, aspect, 0.1, 100);
     }
     else {
-        mProjection = ortho(-VP_DISTANCE*aspect,VP_DISTANCE*aspect, -VP_DISTANCE, VP_DISTANCE,-5*VP_DISTANCE,5*VP_DISTANCE);
+        projection = ortho(-VP_DISTANCE*aspect,VP_DISTANCE*aspect, -VP_DISTANCE, VP_DISTANCE,-5*VP_DISTANCE,5*VP_DISTANCE);
     }
 
     const jitter = () => (Math.random() - 0.5) * shake;
@@ -603,16 +1001,50 @@ function setupCamera()
     else {
         Mview = mult(translate(jitter(), jitter(), 0), ortho_views[camera]);
     }
+    applyView(projection, Mview, persp);
+    return persp;
+}
 
+function applyView(projection, view, persp)
+{
+    mProjection = projection;
     gl.useProgram(program);
     gl.uniformMatrix4fv(gl.getUniformLocation(program, "mProjection"), false, flatten(mProjection));
     //directions only need the rotation part of the view matrix
-    const toView = v => normalize(vec3(mult(Mview, vec4(...v, 0))));
+    const toView = v => normalize(vec3(mult(view, vec4(...v, 0))));
     gl.uniform3fv(gl.getUniformLocation(program, "lightDir"), flatten(toView(sun)));
     gl.uniform3fv(gl.getUniformLocation(program, "upDir"), flatten(toView([0, 1, 0])));
-    gl.uniform3fv(gl.getUniformLocation(program, "fogColor"), flatten(horizon));
-    gl.uniform1f(gl.getUniformLocation(program, "fogDensity"), persp ? 0.06 : 0.0);
+    gl.uniform3fv(gl.getUniformLocation(program, "fogColor"), flatten(sky().horizon));
+    gl.uniform1f(gl.getUniformLocation(program, "fogDensity"), persp ? (hills ? 0.025 : 0.06) : 0.0);
     gl.uniform1f(gl.getUniformLocation(program, "orthographic"), persp ? 0.0 : 1.0);
+}
+
+const sky = () => hills ? skies.hills : skies.normal;
+
+//top-down map of the arena in the bottom-right corner
+function drawRadar()
+{
+    const ratio = window.devicePixelRatio || 1;
+    const size = Math.round(radarSize() * ratio), inset = Math.round(16 * ratio);
+    gl.enable(gl.SCISSOR_TEST);
+    gl.scissor(canvas.width - size - inset, inset, size, size);
+    gl.viewport(canvas.width - size - inset, inset, size, size);
+    gl.clearColor(0.04, 0.07, 0.1, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+    const view = lookAt([0, 5, 0], [0, 0, 0], [0, 0, -1]);
+    applyView(ortho(-6.3, 6.3, -6.3, 6.3, 0.1, 20), view, false);
+    loadMatrix(view);
+    pushMatrix();
+        multTranslation([-0.1, -0.02, -0.1]);
+        multScale([12, 0.02, 12]);
+        setColor(...(hills ? [0.3, 0.66, 0.2] : [0.22, 0.42, 0.18]));
+        draw(CUBE);
+    popMatrix();
+    casters();
+
+    gl.disable(gl.SCISSOR_TEST);
+    gl.viewport(0, 0, canvas.width, canvas.height);
 }
 
 function drawSky()
@@ -623,8 +1055,8 @@ function drawSky()
     const loc = gl.getAttribLocation(skyProgram, "vPosition");
     gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
     gl.enableVertexAttribArray(loc);
-    gl.uniform3fv(gl.getUniformLocation(skyProgram, "horizon"), flatten(horizon));
-    gl.uniform3fv(gl.getUniformLocation(skyProgram, "zenith"), flatten(zenith));
+    gl.uniform3fv(gl.getUniformLocation(skyProgram, "horizon"), flatten(sky().horizon));
+    gl.uniform3fv(gl.getUniformLocation(skyProgram, "zenith"), flatten(sky().zenith));
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     gl.disableVertexAttribArray(loc);
     gl.depthMask(true);
@@ -645,15 +1077,21 @@ function render(time)
 
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
     drawSky();
-    setupCamera();
+    const persp = setupCamera();
     setShadow(false);
 
+    //the floor marks the stencil, so shadows land only on the floor and not in the air past its edge
     loadMatrix(Mview);
+    gl.enable(gl.STENCIL_TEST);
+    gl.stencilFunc(gl.ALWAYS, 1, 0xff);
+    gl.stencilOp(gl.KEEP, gl.KEEP, gl.REPLACE);
     pushMatrix();
         multTranslation([0,-1/50,0]);
         multScale([1/5, 1/50, 1/5]);
         Tile();
     popMatrix();
+    gl.disable(gl.STENCIL_TEST);
+    if(hills) scenery(persp);
 
     gl.enable(gl.BLEND);
     gl.enable(gl.POLYGON_OFFSET_FILL);
@@ -664,7 +1102,7 @@ function render(time)
     //the stencil makes overlapping shadow parts darken the floor only once
     gl.polygonOffset(-2, -2);
     gl.enable(gl.STENCIL_TEST);
-    gl.stencilFunc(gl.EQUAL, 0, 0xff);
+    gl.stencilFunc(gl.EQUAL, 1, 0xff);
     gl.stencilOp(gl.KEEP, gl.KEEP, gl.INCR);
     setShadow(true);
     loadMatrix(mult(Mview, shadowMatrix()));
@@ -683,6 +1121,8 @@ function render(time)
     effects();
     gl.depthMask(true);
     gl.disable(gl.BLEND);
+
+    if(radar) drawRadar();
 }
 
 const urls = ["shader.vert", "shader.frag", "sky.vert", "sky.frag"];

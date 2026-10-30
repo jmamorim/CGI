@@ -16,7 +16,7 @@ canvas {
     height: 100%;
 }
 
-#hud, #score-box, #toast {
+#hud, #score-box, #battle-box, #toast {
     position: fixed;
     background: rgba(12, 16, 24, 0.55);
     backdrop-filter: blur(6px);
@@ -99,4 +99,86 @@ kbd {
 
 #toast.show {
     opacity: 1;
+}
+
+#score-box .off, #battle-box.off, #radar.off {
+    display: none;
+}
+
+#rings {
+    color: #ffd23a;
+}
+
+#battle-box {
+    top: 84px;
+    right: 16px;
+    display: flex;
+    gap: 18px;
+    padding: 10px 16px;
+}
+
+#battle-box div {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+#battle-box span {
+    font-size: 22px;
+    font-weight: bold;
+}
+
+#battle-box small {
+    color: #9aa6ba;
+}
+
+#hearts {
+    color: #ff5a4e;
+    letter-spacing: 2px;
+}
+
+#modes {
+    position: fixed;
+    top: 16px;
+    left: 16px;
+    display: flex;
+    gap: 8px;
+}
+
+#modes button {
+    padding: 8px 12px;
+    border: 1px solid #56607a;
+    border-radius: 10px;
+    background: rgba(12, 16, 24, 0.55);
+    backdrop-filter: blur(6px);
+    color: #e8ecf2;
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+#modes button:hover {
+    border-color: #9aa6ba;
+}
+
+#modes button.active {
+    border-color: #ffd23a;
+    background: rgba(70, 56, 10, 0.7);
+}
+
+#radar {
+    position: fixed;
+    right: 14px;
+    bottom: 14px;
+    border: 2px solid rgba(232, 236, 242, 0.5);
+    border-radius: 4px;
+    pointer-events: none;
+}
+
+#damage {
+    position: fixed;
+    inset: 0;
+    background: radial-gradient(ellipse at center, transparent 45%, rgba(200, 20, 10, 0.7));
+    opacity: 0;
+    pointer-events: none;
 }

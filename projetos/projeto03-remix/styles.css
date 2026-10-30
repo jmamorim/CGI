@@ -1,0 +1,70 @@
+body, html {
+    height: 100%;
+}
+body {
+    /*display: flex;*/
+    margin: 0px;
+    overflow: hidden; /*  Disable scrollbars */
+    background-color: black;
+}
+
+canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+#help {
+    position: fixed;
+    left: 16px;
+    bottom: 16px;
+    padding: 10px 14px;
+    border-radius: 10px;
+    background: rgba(10, 12, 20, 0.6);
+    backdrop-filter: blur(6px);
+    color: #dfe4ee;
+    font: 12px/1.7 ui-monospace, monospace;
+    pointer-events: none;
+    transition: opacity 0.2s;
+}
+
+#help.hidden {
+    opacity: 0;
+}
+
+#help ul {
+    margin: 4px 0 0;
+    padding: 0;
+    list-style: none;
+    color: #aab3c5;
+}
+
+kbd {
+    display: inline-block;
+    min-width: 1.2em;
+    padding: 0 4px;
+    border: 1px solid #56607a;
+    border-radius: 4px;
+    text-align: center;
+    color: #fff;
+}
+
+#toast {
+    position: fixed;
+    top: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 8px 16px;
+    border-radius: 10px;
+    background: rgba(10, 12, 20, 0.6);
+    backdrop-filter: blur(6px);
+    color: #fff;
+    font: 14px ui-monospace, monospace;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.25s;
+}
+
+#toast.show {
+    opacity: 1;
+}
