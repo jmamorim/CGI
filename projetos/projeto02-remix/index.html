@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8">
+        <link rel="stylesheet" href="styles.css">
+        <title>Projeto 2 Remix</title>
+        <script type="module" src="./app.js"></script>
+    </head>
+    <body>
+        <canvas id="gl-canvas" width="128" height="128">
+            Oops! Something went wrong!
+        </canvas>
+        <div id="score-box">
+            <div><span id="score">0</span><small>alvos</small></div>
+            <div><span id="shots">0</span><small>tiros</small></div>
+            <div><span id="accuracy">–</span><small>precisão</small></div>
+        </div>
+        <div id="hud">
+            <h1>Tanque <span id="camera"></span></h1>
+            <ul>
+                <li><kbd>↑</kbd><kbd>↓</kbd> andar · <kbd>←</kbd><kbd>→</kbd> virar</li>
+                <li><kbd>A</kbd><kbd>D</kbd> torre · <kbd>W</kbd><kbd>S</kbd> canhão</li>
+                <li><kbd>Espaço</kbd> disparar</li>
+                <li><kbd>1</kbd>–<kbd>4</kbd> vistas originais · <kbd>5</kbd> órbita · <kbd>6</kbd> perseguição</li>
+                <li>arrastar: rodar câmara · roda ou <kbd>+</kbd><kbd>-</kbd>: zoom</li>
+                <li><kbd>Shift</kbd>+<kbd>W</kbd>/<kbd>S</kbd> arame / sólido · <kbd>H</kbd> esconder</li>
+            </ul>
+        </div>
+        <div id="toast"></div>
+    </body>
+</html>
