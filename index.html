@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CGI · Computer Graphics Projects</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #05060a;
+    --glass: rgba(14, 17, 26, 0.62);
+    --border: rgba(255, 255, 255, 0.09);
+    --text: #eef1f7;
+    --muted: #8a93a6;
+    --hot: #ff4d6d;
+    --cold: #3ddcff;
+    --mono: "JetBrains Mono", ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--bg); }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.5 "Space Grotesk", system-ui, sans-serif;
+    overflow-x: hidden;
+  }
+  #field { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 0; display: block; }
+  /* darkens the shader toward the edges so the cards stay readable */
+  .veil { position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    background: radial-gradient(ellipse at 50% 0%, transparent 0%, rgba(5,6,10,.55) 60%, rgba(5,6,10,.9) 100%); }
+  main { position: relative; z-index: 1; max-width: 1080px; margin: 0 auto; padding: 0 16px 80px; }
+
+  .hero { min-height: 78vh; display: flex; flex-direction: column; justify-content: center; }
+  .eyebrow { font: 600 0.8rem var(--mono); letter-spacing: .2em; text-transform: uppercase; color: var(--cold); margin: 0 0 16px; }
+  .eyebrow::before { content: "> "; color: var(--hot); }
+  h1 {
+    margin: 0;
+    font-size: clamp(4.5rem, 18vw, 11rem);
+    line-height: .9;
+    letter-spacing: -0.04em;
+    background: linear-gradient(100deg, var(--hot), #ffb36b 35%, #fff 50%, #8af0ff 65%, var(--cold));
+    background-size: 200% 100%;
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    animation: sheen 8s ease-in-out infinite alternate;
+  }
+  @keyframes sheen { to { background-position: 100% 0; } }
+  .tagline { max-width: 34ch; margin: 20px 0 0; font-size: clamp(1.1rem, 2.6vw, 1.4rem); color: #c4cad6; }
+  .stats { display: flex; flex-wrap: wrap; gap: 8px 24px; margin-top: 32px; font: 0.85rem var(--mono); color: var(--muted); }
+  .stats b { color: var(--text); font-weight: 600; }
+  @media (hover: none) { .hint { display: none; } }
+  .scroll { margin-top: 48px; font: 0.75rem var(--mono); color: var(--muted); letter-spacing: .15em; }
+  .scroll span { display: inline-block; animation: bob 1.6s ease-in-out infinite; }
+  @keyframes bob { 50% { transform: translateY(6px); } }
+
+  section { margin-top: 72px; }
+  .section-head { display: flex; align-items: baseline; gap: 16px; margin-bottom: 20px; }
+  h2 { margin: 0; font-size: 1.6rem; letter-spacing: -0.01em; }
+  .section-head .rule { flex: 1; height: 1px; background: linear-gradient(90deg, var(--border), transparent); }
+  .section-head .count { font: 0.8rem var(--mono); color: var(--muted); }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 20px; perspective: 1200px; }
+  .card {
+    --mx: 50%; --my: 50%; --rx: 0deg; --ry: 0deg;
+    position: relative;
+    display: flex; flex-direction: column;
+    overflow: hidden;
+    background: var(--glass);
+    backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    transform: rotateX(var(--rx)) rotateY(var(--ry));
+    transition: transform .25s ease-out, border-color .25s, box-shadow .25s;
+  }
+  .card:hover, .card:focus-within {
+    border-color: rgba(255,255,255,.22);
+    box-shadow: 0 20px 60px -20px rgba(61,220,255,.35), 0 10px 40px -20px rgba(255,77,109,.35);
+  }
+  /* glow that follows the cursor */
+  .card::before {
+    content: ""; position: absolute; inset: 0; z-index: 2; pointer-events: none; opacity: 0; transition: opacity .25s;
+    background: radial-gradient(420px circle at var(--mx) var(--my), rgba(255,255,255,.12), transparent 45%);
+  }
+  .card:hover::before { opacity: 1; }
+  .thumb { position: relative; aspect-ratio: 16 / 10; overflow: hidden; border-bottom: 1px solid var(--border); }
+  .thumb img { display: block; width: 100%; height: 100%; object-fit: cover; transform: scale(1.02); transition: transform .5s cubic-bezier(.2,.7,.2,1), filter .5s; filter: saturate(.85); }
+  .card:hover .thumb img { transform: scale(1.09); filter: saturate(1.15); }
+  .thumb .num {
+    position: absolute; top: 12px; left: 12px;
+    font: 600 0.75rem var(--mono); padding: 4px 8px; border-radius: 6px;
+    background: rgba(5,6,10,.7); border: 1px solid var(--border); backdrop-filter: blur(6px);
+  }
+  .body { padding: 18px 20px 20px; display: flex; flex-direction: column; gap: 8px; flex: 1; }
+  .card h3 { margin: 0; font-size: 1.3rem; letter-spacing: -0.01em; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .card h3 a { color: var(--text); text-decoration: none; }
+  /* the title link covers the whole card, so a click anywhere opens the project */
+  .card h3 a::after { content: ""; position: absolute; inset: 0; z-index: 3; border-radius: 16px; }
+  .card h3 a:focus-visible { outline: none; }
+  .card:focus-within { outline: 2px solid var(--cold); outline-offset: 3px; }
+  .arrow { font-family: var(--mono); color: var(--muted); transition: transform .25s, color .25s; }
+  .card:hover .arrow { transform: translateX(4px); color: var(--cold); }
+  .card p { margin: 0; color: var(--muted); }
+  .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: auto; padding-top: 8px; }
+  .tags span { font: 0.7rem var(--mono); color: #b9c1d0; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--border); }
+
+  footer { margin-top: 96px; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; font: 0.8rem var(--mono); color: var(--muted); }
+  footer a { color: var(--text); }
+  footer a:hover { color: var(--cold); }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before { animation: none !important; transition: none !important; }
+  }
+</style>
+</head>
+<body>
+<canvas id="field" aria-hidden="true"></canvas>
+<div class="veil"></div>
+<main>
+  <header class="hero">
+    <p class="eyebrow">Computer Graphics Projects</p>
+    <h1>CGI</h1>
+    <p class="tagline">Field lines, tanks, lights and cubes. Built from scratch in WebGL and GLSL.</p>
+    <div class="stats"><span><b>6</b> projects</span><span><b>WebGL</b> + GLSL</span><span class="hint">move your mouse ↗</span></div>
+    <div class="scroll">SCROLL <span>↓</span></div>
+  </header>
+
+  <section>
+    <div class="section-head"><h2>Projects</h2><span class="rule"></span><span class="count">02</span></div>
+    <div class="grid">
+      <article class="card">
+        <div class="thumb"><img src="projetos/projeto02/thumb.jpg" alt="Screenshot of Projeto 2" loading="lazy"><span class="num">P02</span></div>
+        <div class="body">
+          <h3><a href="projetos/projeto02/">Projeto 2</a><span class="arrow">→</span></h3>
+          <p>Tank scene built with hierarchical modelling.</p>
+          <div class="tags"><span>hierarchy</span><span>transforms</span></div>
+        </div>
+      </article>
+      <article class="card">
+        <div class="thumb"><img src="projetos/projeto03/thumb.jpg" alt="Screenshot of Projeto 3" loading="lazy"><span class="num">P03</span></div>
+        <div class="body">
+          <h3><a href="projetos/projeto03/">Projeto 3</a><span class="arrow">→</span></h3>
+          <p>Lighting and materials with multiple light sources.</p>
+          <div class="tags"><span>phong</span><span>lights</span><span>materials</span></div>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head"><h2>Remixes</h2><span class="rule"></span><span class="count">03</span></div>
+    <div class="grid">
+      <article class="card">
+        <div class="thumb"><img src="projetos/proj1/thumb.jpg" alt="Screenshot of Projeto 1 Remix" loading="lazy"><span class="num">P01·RMX</span></div>
+        <div class="body">
+          <h3><a href="projetos/proj1/">Projeto 1 Remix</a><span class="arrow">→</span></h3>
+          <p>Electric field simulation with charges and field lines.</p>
+          <div class="tags"><span>particles</span><span>fields</span><span>2D</span></div>
+        </div>
+      </article>
+      <article class="card">
+        <div class="thumb"><img src="projetos/projeto02-remix/thumb.jpg" alt="Screenshot of Projeto 2 Remix" loading="lazy"><span class="num">P02·RMX</span></div>
+        <div class="body">
+          <h3><a href="projetos/projeto02-remix/">Projeto 2 Remix</a><span class="arrow">→</span></h3>
+          <p>The tank with extra cameras: free orbit and chase views.</p>
+          <div class="tags"><span>cameras</span><span>gameplay</span></div>
+        </div>
+      </article>
+      <article class="card">
+        <div class="thumb"><img src="projetos/projeto03-remix/thumb.jpg" alt="Screenshot of Projeto 3 Remix" loading="lazy"><span class="num">P03·RMX</span></div>
+        <div class="body">
+          <h3><a href="projetos/projeto03-remix/">Projeto 3 Remix</a><span class="arrow">→</span></h3>
+          <p>Lighting scenes with animated lights, material presets and music.</p>
+          <div class="tags"><span>lights</span><span>bloom</span><span>audio</span></div>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head"><h2>Extras</h2><span class="rule"></span><span class="count">01</span></div>
+    <div class="grid">
+      <article class="card">
+        <div class="thumb"><img src="projetos/waves/thumb.jpg" alt="Screenshot of Cube Vibes" loading="lazy"><span class="num">XTRA</span></div>
+        <div class="body">
+          <h3><a href="projetos/waves/">Cube Vibes</a><span class="arrow">→</span></h3>
+          <p>Waves of cubes — a side project.</p>
+          <div class="tags"><span>cubes</span><span>waves</span></div>
+        </div>
+      </article>
+    </div>
+  </section>
+
+  <footer><span>© jmamorim</span><a href="https://github.com/jmamorim/CGI">source on github ↗</a></footer>
+</main>
+
+<script>
+// Background: a dipole electric field drawn in a fragment shader, a nod to Projeto 1.
+// The positive charge follows the mouse; the negative one drifts on its own.
+(() => {
+  const canvas = document.getElementById('field');
+  const gl = canvas.getContext('webgl', { antialias: false, alpha: false });
+  if (!gl) return;
+  const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  const vs = 'attribute vec2 p; void main(){ gl_Position = vec4(p, 0.0, 1.0); }';
+  const fs = `
+    precision highp float;
+    uniform vec2 res; uniform vec2 a; uniform vec2 b; uniform float t;
+    vec2 E(vec2 p, vec2 q, float s){ vec2 d = p - q; float r2 = dot(d, d) + 0.002; return s * d / (r2 * sqrt(r2)); }
+    void main(){
+      vec2 uv = (gl_FragCoord.xy - 0.5 * res) / res.y;
+      vec2 e = E(uv, a, 1.0) + E(uv, b, -1.0);
+      // the field angle gives the streamline bands, the potential gives equipotential rings
+      float pot = 1.0 / length(uv - a) - 1.0 / length(uv - b);
+      float ang = atan(e.y, e.x);
+      float lines = smoothstep(0.92, 1.0, abs(sin(ang * 14.0 + t * 0.6)));
+      float rings = smoothstep(0.96, 1.0, abs(sin(pot * 2.2 - t * 0.8)));
+      float mag = clamp(log(length(e) + 1.0) * 0.35, 0.0, 1.0);
+      vec3 hot = vec3(1.0, 0.30, 0.43), cold = vec3(0.24, 0.86, 1.0);
+      vec3 col = mix(cold, hot, smoothstep(-1.5, 1.5, pot));
+      vec3 c = col * (lines * 0.35 + rings * 0.18 + 0.05) * mag;
+      gl_FragColor = vec4(c, 1.0);
+    }`;
+  const sh = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); return s; };
+  const prog = gl.createProgram();
+  gl.attachShader(prog, sh(gl.VERTEX_SHADER, vs));
+  gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, fs));
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return;
+  gl.useProgram(prog);
+  gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0);
+  gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+  const u = n => gl.getUniformLocation(prog, n);
+  const uRes = u('res'), uA = u('a'), uB = u('b'), uT = u('t');
+
+  // half resolution: the soft look hides it and it keeps laptops cool
+  const scale = 0.5;
+  const resize = () => {
+    canvas.width = Math.max(1, innerWidth * scale);
+    canvas.height = Math.max(1, innerHeight * scale);
+    gl.viewport(0, 0, canvas.width, canvas.height);
+  };
+  addEventListener('resize', resize);
+  resize();
+
+  const target = [0.35, 0.1], pos = [0.35, 0.1];
+  addEventListener('pointermove', e => {
+    target[0] = (e.clientX - innerWidth / 2) / innerHeight;
+    target[1] = (innerHeight / 2 - e.clientY) / innerHeight;
+  });
+
+  const frame = ms => {
+    const t = ms / 1000;
+    pos[0] += (target[0] - pos[0]) * 0.06;
+    pos[1] += (target[1] - pos[1]) * 0.06;
+    gl.uniform2f(uRes, canvas.width, canvas.height);
+    gl.uniform2f(uA, pos[0], pos[1]);
+    gl.uniform2f(uB, -0.45 + 0.12 * Math.cos(t * 0.3), -0.05 + 0.12 * Math.sin(t * 0.4));
+    gl.uniform1f(uT, t);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+    if (!still) requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
+})();
+
+// Cards tilt toward the cursor and carry a glow that follows it.
+if (matchMedia('(hover: hover) and (prefers-reduced-motion: no-preference)').matches) {
+  for (const card of document.querySelectorAll('.card')) {
+    card.addEventListener('pointermove', e => {
+      const r = card.getBoundingClientRect();
+      const x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height;
+      card.style.setProperty('--mx', x * 100 + '%');
+      card.style.setProperty('--my', y * 100 + '%');
+      card.style.setProperty('--ry', (x - 0.5) * 10 + 'deg');
+      card.style.setProperty('--rx', (0.5 - y) * 10 + 'deg');
+    });
+    card.addEventListener('pointerleave', () => {
+      card.style.setProperty('--rx', '0deg');
+      card.style.setProperty('--ry', '0deg');
+    });
+  }
+}
+</script>
+</body>
+</html>
