@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CGI Projects</title>
+<style>
+  :root {
+    --bg: #0e1116;
+    --card: #161b22;
+    --card-hover: #1c232d;
+    --border: #2a313c;
+    --text: #e6edf3;
+    --muted: #8b949e;
+    --accent: #58a6ff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 960px; margin: 0 auto; padding: 48px 16px; }
+  h1 { margin: 0 0 4px; font-size: 2rem; }
+  header p { margin: 0 0 32px; color: var(--muted); }
+  h2 { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 32px 0 12px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; }
+  .card {
+    position: relative;
+    display: flex; flex-direction: column;
+    padding: 20px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    transition: background .15s, border-color .15s;
+  }
+  .card:hover, .card:focus-within { background: var(--card-hover); border-color: var(--accent); }
+  .card h3 { margin: 0 0 6px; font-size: 1.15rem; }
+  .card h3 a { color: var(--text); text-decoration: none; }
+  /* whole card is clickable via the title link */
+  .card h3 a::after { content: ""; position: absolute; inset: 0; border-radius: 10px; }
+  .card h3 a:focus-visible { outline: none; }
+  .card p { margin: 0 0 16px; color: var(--muted); flex: 1; }
+  .card .report { position: relative; z-index: 1; align-self: flex-start; color: var(--accent); font-size: 0.9rem; text-decoration: none; }
+  .card .report:hover { text-decoration: underline; }
+  footer { margin-top: 48px; color: var(--muted); font-size: 0.9rem; }
+  footer a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>CGI Projects</h1>
+    <p>WebGL projects from the Computer Graphics course, plus remixes and extras.</p>
+  </header>
+
+  <h2>Course projects</h2>
+  <div class="grid">
+    <article class="card">
+      <h3><a href="projetos/projeto02/">Projeto 2</a></h3>
+      <p>Tank scene built with hierarchical modelling.</p>
+      <a class="report" href="projetos/projeto02/report.pdf">Report (PDF)</a>
+    </article>
+    <article class="card">
+      <h3><a href="projetos/projeto03/">Projeto 3</a></h3>
+      <p>Lighting and materials with multiple light sources.</p>
+      <a class="report" href="projetos/projeto03/report.pdf">Report (PDF)</a>
+    </article>
+  </div>
+
+  <h2>Remixes</h2>
+  <div class="grid">
+    <article class="card">
+      <h3><a href="projetos/proj1/">Projeto 1 Remix</a></h3>
+      <p>Electric field simulation with charges and field lines.</p>
+      <a class="report" href="projetos/proj1/report.pdf">Report (PDF)</a>
+    </article>
+    <article class="card">
+      <h3><a href="projetos/projeto02-remix/">Projeto 2 Remix</a></h3>
+      <p>The tank with extra cameras: free orbit and chase views.</p>
+      <a class="report" href="projetos/projeto02-remix/report.pdf">Report (PDF)</a>
+    </article>
+    <article class="card">
+      <h3><a href="projetos/projeto03-remix/">Projeto 3 Remix</a></h3>
+      <p>Lighting scenes with animated lights, material presets and music.</p>
+      <a class="report" href="projetos/projeto03-remix/report.pdf">Report (PDF)</a>
+    </article>
+  </div>
+
+  <h2>Extras</h2>
+  <div class="grid">
+    <article class="card">
+      <h3><a href="projetos/waves/">Cube Vibes</a></h3>
+      <p>Waves of cubes — a side project.</p>
+    </article>
+  </div>
+
+  <footer>Source on <a href="https://github.com/jmamorim/CGI">GitHub</a>.</footer>
+</main>
+</body>
+</html>
